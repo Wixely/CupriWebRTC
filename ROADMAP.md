@@ -28,9 +28,13 @@ messages**, with the endpoint driven from static, pre-published parameters (no l
 - **Next:** bridge the BouncyCastle `DatagramTransport` to the ICE UDP flow (they share the port) — lands with the
   top-level listener.
 
-## Phase 4 — SCTP + DataChannel
-- Minimal **SCTP** association over DTLS (the hard part: INIT/COOKIE handshake, DATA/SACK, ordered reliable delivery),
-  then **DCEP** (DATA_CHANNEL_OPEN/ACK) to establish a channel. Surface it as a message duplex.
+## Phase 4 — SCTP + DataChannel (in progress)
+- **Wire codec ✅** — `SctpPacket` (common header + CRC-32C checksum, RFC 3309, validated against the standard
+  check value) and `SctpChunk` (generic TLV with 4-byte padding) + chunk-type constants. Round-trip + checksum tests.
+- **Next (the hard part):** the passive **association handshake** (INIT → INIT-ACK w/ state cookie → COOKIE-ECHO →
+  COOKIE-ACK), then **DATA/SACK** with ordered reliable delivery + TSN tracking, then **DCEP**
+  (DATA_CHANNEL_OPEN/ACK on PPID 50) to open the channel. Driven over the secured DTLS transport; surfaced as a
+  message duplex.
 
 ## Phase 5 — Top-level API + browser interop
 - `WebRtcListener` tying the layers together, emitting opened DataChannels. Validate end to end against a real
