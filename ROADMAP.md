@@ -44,9 +44,16 @@ messages**, with the endpoint driven from static, pre-published parameters (no l
 - *Minimal profile (deferred): fragmentation/reassembly, gap-ack/selective retransmit, and congestion control —
   enough for DCEP + small messages over the low-loss DTLS channel; hardened later.*
 
-## Phase 5 — Top-level API + browser interop
-- `WebRtcListener` tying the layers together, emitting opened DataChannels. Validate end to end against a real
-  Chromium (browser automation), including the static-parameter / ICE-lite / accept-any-cert mode.
+## Phase 5 — Top-level API ✅ / browser interop (next)
+- **`WebRtcListener` ✅** — assembles the whole stack on one UDP socket: ICE answers checks + demuxes DTLS, an
+  `EndpointDatagramTransport` bridges DTLS to the socket, `DtlsServer` secures it, and `SctpAssociation` (responder)
+  runs the DataChannel over the secured transport. Exposes the static `WebRtcEndpointParameters` (ufrag/pwd,
+  fingerprint, port) to publish, plus `ChannelOpened` / `MessageReceived` / `SendMessage`.
+- **Full-stack loopback test ✅** — a real UDP client drives ICE → DTLS → SCTP against the listener, verifies the
+  published fingerprint matches the served cert, and delivers a message. Everything a browser does, minus the browser.
+- **Next:** validate against a **real Chromium** (browser automation) — the static-parameter / ICE-lite /
+  accept-any-cert mode against the actual browser WebRTC stack; then the CupriNet binding + fragmentation/reliability
+  hardening.
 
 ## Explicitly out of scope
 - Media (SRTP/audio/video), TURN, trickle ICE, the ICE controlling role, and the full RTCPeerConnection SDP engine.
