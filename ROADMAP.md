@@ -28,13 +28,21 @@ messages**, with the endpoint driven from static, pre-published parameters (no l
 - **Next:** bridge the BouncyCastle `DatagramTransport` to the ICE UDP flow (they share the port) — lands with the
   top-level listener.
 
-## Phase 4 — SCTP + DataChannel (in progress)
-- **Wire codec ✅** — `SctpPacket` (common header + CRC-32C checksum, RFC 3309, validated against the standard
-  check value) and `SctpChunk` (generic TLV with 4-byte padding) + chunk-type constants. Round-trip + checksum tests.
-- **Next (the hard part):** the passive **association handshake** (INIT → INIT-ACK w/ state cookie → COOKIE-ECHO →
-  COOKIE-ACK), then **DATA/SACK** with ordered reliable delivery + TSN tracking, then **DCEP**
-  (DATA_CHANNEL_OPEN/ACK on PPID 50) to open the channel. Driven over the secured DTLS transport; surfaced as a
-  message duplex.
+## Phase 4 — SCTP + DataChannel ✅ (core)
+- **Wire codec** — `SctpPacket` (common header + CRC-32C checksum, RFC 3309, validated against the standard check
+  value) and `SctpChunk` (generic TLV with 4-byte padding).
+- **Chunk bodies** — INIT/INIT-ACK (with State Cookie parameter), DATA, SACK, plus DCEP (RFC 8832) open/ack + the
+  WebRTC data PPIDs.
+- **Association** (`SctpAssociation`) — the four-way handshake with a **stateless HMAC state cookie**, ordered DATA
+  delivery + cumulative SACK, DCEP channel open→ack, and message send. Both the **passive (responder)** and
+  **active (initiator)** roles. Pure "packet in → packets out + events" model.
+- **Driver** (`SctpTransport`) — runs an association over a datagram transport (the DTLS channel), serialising the
+  state machine and pumping a background receive loop.
+- Tests: CRC-32C vs the standard check value; chunk/packet round-trips; the full responder flow (handshake → DCEP →
+  data both ways) driven with crafted packets; a two-association loopback; and two drivers exchanging a message over
+  an in-memory datagram pair.
+- *Minimal profile (deferred): fragmentation/reassembly, gap-ack/selective retransmit, and congestion control —
+  enough for DCEP + small messages over the low-loss DTLS channel; hardened later.*
 
 ## Phase 5 — Top-level API + browser interop
 - `WebRtcListener` tying the layers together, emitting opened DataChannels. Validate end to end against a real
