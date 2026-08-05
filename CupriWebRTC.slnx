@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/CupriWebRTC/CupriWebRTC.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/CupriWebRTC.Tests/CupriWebRTC.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,27 @@
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+
+  <!-- Package metadata (applied when a project opts into packing). -->
+  <PropertyGroup>
+    <Version>0.1.0</Version>
+    <Authors>Wixely</Authors>
+    <Company>Wixely</Company>
+    <Product>CupriWebRTC</Product>
+    <Description>A minimal, generic, 100% managed WebRTC data-channel library for C#/.NET (ICE-lite / DTLS / SCTP), MIT-licensed.</Description>
+    <PackageProjectUrl>https://github.com/Wixely/CupriWebRTC</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/Wixely/CupriWebRTC</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageTags>webrtc;ice;stun;dtls;sctp;datachannel;p2p;managed</PackageTags>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+</Project>

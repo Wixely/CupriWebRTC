@@ -1,0 +1,24 @@
+# .NET build output
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+artifacts/
+*.user
+*.suo
+
+# IDE / tooling
+.vs/
+.vscode/
+.idea/
+*.DotSettings.user
+
+# NuGet
+nuget.local.config
+*.nupkg
+*.snupkg
+packages/
+
+# OS noise
+.DS_Store
+Thumbs.db
