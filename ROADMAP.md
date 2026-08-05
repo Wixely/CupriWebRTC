@@ -9,14 +9,16 @@ messages**, with the endpoint driven from static, pre-published parameters (no l
 
 ## Phase 1 — STUN codec ✅
 - Message encode/decode; MESSAGE-INTEGRITY (HMAC-SHA1) add + verify; FINGERPRINT (CRC-32) add + verify;
-  XOR-MAPPED-ADDRESS (IPv4/IPv6). Self-consistent round-trip tests.
-- **TODO:** add the official **RFC 5769** sample-vector tests for cross-implementation certainty.
+  XOR-MAPPED-ADDRESS (IPv4/IPv6). Validated against the official **RFC 5769** sample vector (our code verifies the
+  RFC's real integrity + fingerprint) plus self-consistent round-trip tests.
 
 ## Phase 2 — ICE-lite responder
-- Bind a UDP socket; parse incoming STUN **Binding Requests**; verify USERNAME (`ourUfrag:theirUfrag`) +
-  MESSAGE-INTEGRITY with our password; reply with a **Binding Success** carrying XOR-MAPPED-ADDRESS + our
-  MESSAGE-INTEGRITY + FINGERPRINT. Learn the peer's address peer-reflexively; demultiplex STUN vs. DTLS on the port.
-- Fixed, caller-supplied **ufrag/password** (so they can be published ahead of time). No trickle, no gathering.
+- **Responder logic ✅** — `IceLiteResponder`: verifies an incoming Binding Request's USERNAME (`ourUfrag:theirUfrag`)
+  + MESSAGE-INTEGRITY (our password) + FINGERPRINT, and produces a Binding Success carrying the peer's reflexive
+  XOR-MAPPED-ADDRESS. Fixed, caller-supplied `IceCredentials` (publishable ahead of time). No trickle, no gathering,
+  never initiates checks. Pure logic, unit-tested.
+- **Next:** the UDP socket loop that binds the port, demultiplexes STUN vs. DTLS, drives the responder, and tracks the
+  selected peer address — lands with the DTLS layer (they share the socket).
 
 ## Phase 3 — DTLS server (BouncyCastle)
 - DTLS server handshake over the ICE-selected UDP flow, using a self-signed cert; expose its **fingerprint**
