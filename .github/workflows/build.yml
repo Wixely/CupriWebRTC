@@ -1,0 +1,82 @@
+name: build
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_VERSION: '10.0.x'
+  DOTNET_NOLOGO: 'true'
+  DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 'true'
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Build + run the full test suite. The only dependency is BouncyCastle from
+  # nuget.org (public), so no private-feed authentication is needed.
+  # ---------------------------------------------------------------------------
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+      - name: Test (full suite)
+        run: dotnet test CupriWebRTC.slnx -c Release
+
+  # ---------------------------------------------------------------------------
+  # Pack the NuGet package on every run (as an artifact); push it to the Wixely
+  # GitHub Packages feed only on a v* tag.
+  # ---------------------------------------------------------------------------
+  pack:
+    runs-on: ubuntu-latest
+    needs: test
+    permissions:
+      contents: read
+      packages: write   # push CupriWebRTC to the Wixely GitHub Packages feed on a tag
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+      - name: Determine version
+        id: ver
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=0.1.0-ci.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Pack
+        run: >
+          dotnet pack src/CupriWebRTC/CupriWebRTC.csproj -c Release
+          -p:Version=${{ steps.ver.outputs.version }}
+          -o artifacts/nuget
+      - name: Push to the Wixely GitHub Packages feed (on a v* tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        # RepositoryUrl in Directory.Build.props links the package to Wixely/CupriWebRTC.
+        # --skip-duplicate makes re-runs of a tag safe.
+        run: >
+          dotnet nuget push "artifacts/nuget/*.nupkg"
+          --source https://nuget.pkg.github.com/Wixely/index.json
+          --api-key "${{ secrets.PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}"
+          --skip-duplicate
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nuget-packages
+          path: |
+            artifacts/nuget/*.nupkg
+            artifacts/nuget/*.snupkg
