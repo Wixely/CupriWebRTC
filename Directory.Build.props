@@ -10,7 +10,7 @@
 
   <!-- Package metadata (applied when a project opts into packing). -->
   <PropertyGroup>
-    <Version>0.1.0</Version>
+    <Version>0.1.1</Version>
     <Authors>Wixely</Authors>
     <Company>Wixely</Company>
     <Product>CupriWebRTC</Product>

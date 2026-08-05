@@ -33,8 +33,9 @@ WebRTC library. CupriNet consumes it through a thin binding, the same way it con
   cert by default (the caller re-authenticates above the channel).
 - **SCTP** association + the **DataChannel Establishment Protocol (DCEP)** — the reliable, ordered message duplex a
   browser's `RTCDataChannel` talks to. Both the passive (responder) and active (initiator) roles.
-- A top-level **`WebRtcListener`** that assembles the stack on one socket and emits opened channels / messages, plus
-  the static **`WebRtcEndpointParameters`** to publish.
+- A top-level **`WebRtcListener`** that assembles the stack on one socket and serves **many** peers at once —
+  inbound datagrams are demultiplexed to a per-remote session, so each browser is its own `WebRtcChannel` (with its
+  own messages), bounded by a concurrent-session cap. Plus the static **`WebRtcEndpointParameters`** to publish.
 
 **Out of scope:** SRTP / media, the full `RTCPeerConnection` offer/answer machinery, TURN relaying, and trickle ICE. A
 design goal is that the endpoint runs from **pre-published static parameters** (fixed ICE ufrag/pwd, known fingerprint,
@@ -50,9 +51,15 @@ _ = listener.RunAsync(cancellationToken);
 // Publish these so a browser can dial the endpoint with no signalling server.
 WebRtcEndpointParameters p = listener.Parameters; // ufrag, password, fingerprint, port
 
-listener.ChannelOpened  += ch  => Console.WriteLine($"channel opened: {ch.Label}");
-listener.MessageReceived += (stream, ppid, data) => { /* handle inbound message */ };
-// listener.SendMessage(streamId, Dcep.PpidString, bytes);
+// One event per opened DataChannel — each WebRtcChannel is scoped to the peer that opened it, so many
+// browsers on the one socket never cross-talk.
+listener.ChannelOpened += channel =>
+{
+    Console.WriteLine($"channel opened by {channel.Remote}: {channel.Label}");
+    channel.MessageReceived += (ppid, data) => { /* handle inbound message from this peer */ };
+    channel.Closed += () => { /* peer went away */ };
+    // channel.Send(Dcep.PpidBinary, bytes);
+};
 ```
 
 ## Design notes

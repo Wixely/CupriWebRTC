@@ -32,6 +32,9 @@ public sealed class SctpTransport : IDisposable
     /// <summary>Raised for an inbound application message: (streamId, PPID, payload).</summary>
     public event Action<ushort, uint, byte[]>? MessageReceived;
 
+    /// <summary>Raised once when the receive loop ends (transport closed / dropped), so an owner can release the session.</summary>
+    public event Action? Closed;
+
     /// <summary>True once the SCTP handshake has completed.</summary>
     public bool IsEstablished => _association.IsEstablished;
 
@@ -58,19 +61,26 @@ public sealed class SctpTransport : IDisposable
 
     private void ReceiveLoop()
     {
-        var buffer = new byte[2048];
-        while (!_closed)
+        try
         {
-            int n;
-            try { n = _transport.Receive(buffer, 0, buffer.Length, 1000); }
-            catch { break; }
-            if (n <= 0)
-                continue; // timeout or empty
+            var buffer = new byte[2048];
+            while (!_closed)
+            {
+                int n;
+                try { n = _transport.Receive(buffer, 0, buffer.Length, 1000); }
+                catch { break; }
+                if (n <= 0)
+                    continue; // timeout or empty
 
-            IReadOnlyList<byte[]> responses;
-            lock (_gate)
-                responses = _association.HandlePacket(buffer.AsSpan(0, n));
-            SendAll(responses);
+                IReadOnlyList<byte[]> responses;
+                lock (_gate)
+                    responses = _association.HandlePacket(buffer.AsSpan(0, n));
+                SendAll(responses);
+            }
+        }
+        finally
+        {
+            Closed?.Invoke();
         }
     }
 

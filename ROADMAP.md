@@ -48,12 +48,17 @@ messages**, with the endpoint driven from static, pre-published parameters (no l
 - **`WebRtcListener` ✅** — assembles the whole stack on one UDP socket: ICE answers checks + demuxes DTLS, an
   `EndpointDatagramTransport` bridges DTLS to the socket, `DtlsServer` secures it, and `SctpAssociation` (responder)
   runs the DataChannel over the secured transport. Exposes the static `WebRtcEndpointParameters` (ufrag/pwd,
-  fingerprint, port) to publish, plus `ChannelOpened` / `MessageReceived` / `SendMessage`.
-- **Full-stack loopback test ✅** — a real UDP client drives ICE → DTLS → SCTP against the listener, verifies the
-  published fingerprint matches the served cert, and delivers a message. Everything a browser does, minus the browser.
+  fingerprint, port) to publish, plus a per-channel `ChannelOpened` → `WebRtcChannel` (its own `MessageReceived` /
+  `Send` / `Closed`).
+- **Multi-client ✅ (0.1.1)** — one UDP socket serves **many** peers: inbound datagrams are demultiplexed to a
+  per-remote session (bridge → DTLS → SCTP), bounded by a concurrent-session cap (a Ward) and evicted when the
+  transport drops or the handshake times out. Each peer is an independent channel.
+- **Full-stack loopback tests ✅** — a real UDP client drives ICE → DTLS → SCTP against the listener, verifies the
+  published fingerprint matches the served cert, opens a DataChannel and delivers a message; a second test runs **two**
+  clients over the one socket and asserts each is demuxed to its own peer. Everything a browser does, minus the browser.
 - **Next:** validate against a **real Chromium** (browser automation) — the static-parameter / ICE-lite /
-  accept-any-cert mode against the actual browser WebRTC stack; then the CupriNet binding + fragmentation/reliability
-  hardening.
+  accept-any-cert mode against the actual browser WebRTC stack; then fragmentation/reliability hardening and
+  idle-session eviction by timer (today a half-open peer is bounded by the DTLS handshake timeout + the session cap).
 
 ## Explicitly out of scope
 - Media (SRTP/audio/video), TURN, trickle ICE, the ICE controlling role, and the full RTCPeerConnection SDP engine.

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
@@ -14,14 +15,14 @@ using Xunit;
 namespace CupriWebRTC.Tests;
 
 /// <summary>
-/// Full-stack loopback: a real UDP client drives ICE → DTLS → SCTP against a <see cref="WebRtcListener"/> and sends a
-/// message, using the listener's published <see cref="WebRtcEndpointParameters"/>. This is everything a browser does,
-/// minus the browser.
+/// Full-stack loopback: real UDP "browser" clients drive ICE → DTLS → SCTP against a <see cref="WebRtcListener"/>,
+/// open a DataChannel (DCEP) and send a message, using the listener's published <see cref="WebRtcEndpointParameters"/>.
+/// This is everything a browser does, minus the browser — including two clients sharing the listener's one UDP socket.
 /// </summary>
 public class WebRtcListenerTests
 {
     [Fact]
-    public async Task FullStack_OverUdp_ClientConnects_VerifiesFingerprint_AndSendsMessage()
+    public async Task FullStack_OverUdp_ClientConnects_VerifiesFingerprint_OpensChannel_AndSendsMessage()
     {
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var ct = cts.Token;
@@ -30,55 +31,138 @@ public class WebRtcListenerTests
         await using var listener = new WebRtcListener(new IPEndPoint(IPAddress.Loopback, 0), credentials);
         var run = listener.RunAsync(ct);
 
-        var parameters = listener.Parameters;
-        var server = listener.LocalEndPoint;
+        var received = new TaskCompletionSource<(IPEndPoint Remote, byte[] Data)>(TaskCreationOptions.RunContinuationsAsynchronously);
+        listener.ChannelOpened += channel =>
+            channel.MessageReceived += (_, data) => received.TrySetResult((channel.Remote, data));
 
-        var received = new TaskCompletionSource<byte[]>(TaskCreationOptions.RunContinuationsAsynchronously);
-        listener.MessageReceived += (_, _, data) => received.TrySetResult(data);
-
-        using var udp = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
-
-        // 1. ICE — a STUN Binding check keyed with the published password gets a Binding Success.
-        var stunKey = Encoding.UTF8.GetBytes(parameters.IcePassword);
-        var check = new StunMessage(StunMessageTypes.BindingRequest, StunMessage.NewTransactionId());
-        check.Add(StunAttributes.Username, Encoding.UTF8.GetBytes($"{parameters.IceUfrag}:browser"));
-        check.AddMessageIntegrity(stunKey);
-        check.AddFingerprint();
-        var checkBytes = check.Encode();
-        udp.Send(checkBytes, checkBytes.Length, server);
-
-        udp.Client.ReceiveTimeout = 5000;
-        var from = new IPEndPoint(IPAddress.Any, 0);
-        var stunReply = udp.Receive(ref from);
-        Assert.True(StunMessage.TryParse(stunReply, out var stunResponse));
-        Assert.Equal(StunMessageTypes.BindingSuccessResponse, stunResponse.MessageType);
-        Assert.True(stunResponse.VerifyMessageIntegrity(stunKey));
-
-        // 2. DTLS — connect as the client; verify the server cert matches the published fingerprint.
-        var transport = new UdpDtlsClientTransport(udp, server);
-        var client = new RecordingTlsClient(new BcTlsCrypto(new SecureRandom()));
-        DtlsTransport clientDtls = null!;
-        var dtlsThread = new Thread(() => clientDtls = new DtlsClientProtocol().Connect(client, transport)) { IsBackground = true };
-        dtlsThread.Start();
-        Assert.True(dtlsThread.Join(TimeSpan.FromSeconds(15)), "client DTLS handshake timed out");
-        Assert.Equal(parameters.Fingerprint, client.ServerFingerprint);
-
-        // 3. SCTP — initiate the association and send an application message.
-        using var sctp = new SctpTransport(clientDtls, new SctpAssociation());
-        sctp.Start();
-        sctp.Associate();
-        var deadline = DateTime.UtcNow.AddSeconds(10);
-        while (!sctp.IsEstablished && DateTime.UtcNow < deadline)
-            Thread.Sleep(20);
-        Assert.True(sctp.IsEstablished, "SCTP handshake timed out");
-
-        sctp.SendMessage(0, Dcep.PpidString, "hello from the browser"u8.ToArray());
+        using var browser = BrowserClient.Connect(listener.LocalEndPoint, listener.Parameters);
+        Assert.Equal(listener.Parameters.Fingerprint, browser.ServerFingerprint); // the browser pinned our published cert
+        browser.OpenChannel("chat");
+        browser.Send("hello from the browser");
 
         Assert.True(received.Task.Wait(TimeSpan.FromSeconds(10)), "listener did not receive the message");
-        Assert.Equal("hello from the browser", Encoding.UTF8.GetString(received.Task.Result));
+        var (remote, data) = received.Task.Result;
+        Assert.Equal("hello from the browser", Encoding.UTF8.GetString(data));
+        Assert.Equal(browser.LocalEndPoint.Port, remote.Port); // surfaced with the peer's own source address
+        Assert.Equal(1, listener.SessionCount);
 
         await cts.CancelAsync();
         try { await run; } catch (OperationCanceledException) { }
+    }
+
+    [Fact]
+    public async Task FullStack_TwoClients_ShareOneSocket_EachDeliversItsOwnMessage()
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(40));
+        var ct = cts.Token;
+
+        await using var listener = new WebRtcListener(new IPEndPoint(IPAddress.Loopback, 0));
+        var run = listener.RunAsync(ct);
+
+        var received = new ConcurrentBag<(int RemotePort, string Message)>();
+        using var both = new CountdownEvent(2);
+        listener.ChannelOpened += channel =>
+            channel.MessageReceived += (_, data) =>
+            {
+                received.Add((channel.Remote.Port, Encoding.UTF8.GetString(data)));
+                both.Signal();
+            };
+
+        // Two independent browsers on their own sockets, hitting the listener's single UDP port concurrently.
+        using var alice = BrowserClient.Connect(listener.LocalEndPoint, listener.Parameters);
+        using var bob = BrowserClient.Connect(listener.LocalEndPoint, listener.Parameters);
+        alice.OpenChannel("chat");
+        bob.OpenChannel("chat");
+        alice.Send("from-alice");
+        bob.Send("from-bob");
+
+        Assert.True(both.Wait(TimeSpan.FromSeconds(20)), "did not receive both clients' messages");
+        var messages = received.Select(r => r.Message).ToHashSet();
+        Assert.Contains("from-alice", messages);
+        Assert.Contains("from-bob", messages);
+        Assert.Equal(2, received.Select(r => r.RemotePort).Distinct().Count()); // demuxed to two distinct peers
+        Assert.Equal(2, listener.SessionCount);
+
+        await cts.CancelAsync();
+        try { await run; } catch (OperationCanceledException) { }
+    }
+
+    /// <summary>A minimal "browser": its own UDP socket, an ICE check, a DTLS client (pinning the server cert), an
+    /// SCTP association, and DCEP channel open + message send — the client half of the full stack.</summary>
+    private sealed class BrowserClient : IDisposable
+    {
+        private readonly UdpClient _udp;
+        private readonly DtlsTransport _dtls;
+        private readonly SctpTransport _sctp;
+        private ushort _stream;
+
+        private BrowserClient(UdpClient udp, DtlsTransport dtls, SctpTransport sctp, byte[] serverFingerprint)
+        {
+            _udp = udp;
+            _dtls = dtls;
+            _sctp = sctp;
+            ServerFingerprint = serverFingerprint;
+        }
+
+        public byte[] ServerFingerprint { get; }
+        public IPEndPoint LocalEndPoint => (IPEndPoint)_udp.Client.LocalEndPoint!;
+
+        public static BrowserClient Connect(IPEndPoint server, WebRtcEndpointParameters parameters)
+        {
+            var udp = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
+
+            // 1. ICE — a STUN Binding check keyed with the published password gets a Binding Success.
+            var stunKey = Encoding.UTF8.GetBytes(parameters.IcePassword);
+            var check = new StunMessage(StunMessageTypes.BindingRequest, StunMessage.NewTransactionId());
+            check.Add(StunAttributes.Username, Encoding.UTF8.GetBytes($"{parameters.IceUfrag}:browser"));
+            check.AddMessageIntegrity(stunKey);
+            check.AddFingerprint();
+            var checkBytes = check.Encode();
+            udp.Send(checkBytes, checkBytes.Length, server);
+
+            udp.Client.ReceiveTimeout = 5000;
+            var from = new IPEndPoint(IPAddress.Any, 0);
+            var stunReply = udp.Receive(ref from);
+            Assert.True(StunMessage.TryParse(stunReply, out var stunResponse));
+            Assert.Equal(StunMessageTypes.BindingSuccessResponse, stunResponse.MessageType);
+            Assert.True(stunResponse.VerifyMessageIntegrity(stunKey));
+
+            // 2. DTLS — connect as the client; capture the server cert fingerprint (to compare with the published one).
+            var transport = new UdpDtlsClientTransport(udp, server);
+            var client = new RecordingTlsClient(new BcTlsCrypto(new SecureRandom()));
+            DtlsTransport clientDtls = null!;
+            var dtlsThread = new Thread(() => clientDtls = new DtlsClientProtocol().Connect(client, transport)) { IsBackground = true };
+            dtlsThread.Start();
+            Assert.True(dtlsThread.Join(TimeSpan.FromSeconds(15)), "client DTLS handshake timed out");
+
+            // 3. SCTP — initiate the association.
+            var sctp = new SctpTransport(clientDtls, new SctpAssociation());
+            sctp.Start();
+            sctp.Associate();
+            var deadline = DateTime.UtcNow.AddSeconds(10);
+            while (!sctp.IsEstablished && DateTime.UtcNow < deadline)
+                Thread.Sleep(20);
+            Assert.True(sctp.IsEstablished, "SCTP handshake timed out");
+
+            return new BrowserClient(udp, clientDtls, sctp, client.ServerFingerprint!);
+        }
+
+        /// <summary>Opens a DataChannel via DCEP (so the server raises ChannelOpened).</summary>
+        public void OpenChannel(string label, ushort stream = 0)
+        {
+            _stream = stream;
+            _sctp.SendMessage(stream, Dcep.Ppid, Dcep.BuildOpen(new Dcep.Open(0, 0, 0, label, string.Empty)));
+        }
+
+        /// <summary>Sends an application message on the opened channel.</summary>
+        public void Send(string message) => _sctp.SendMessage(_stream, Dcep.PpidString, Encoding.UTF8.GetBytes(message));
+
+        public void Dispose()
+        {
+            _sctp.Dispose();
+            try { _dtls.Close(); } catch { /* already closed */ }
+            _udp.Dispose();
+        }
     }
 
     /// <summary>A DTLS-over-UDP transport for the "browser" side: sends to the server, receives only DTLS (skips STUN).</summary>
