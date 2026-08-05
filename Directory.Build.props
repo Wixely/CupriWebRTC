@@ -14,7 +14,7 @@
     <Authors>Wixely</Authors>
     <Company>Wixely</Company>
     <Product>CupriWebRTC</Product>
-    <Description>A minimal, generic, 100% managed WebRTC data-channel library for C#/.NET (ICE-lite / DTLS / SCTP), MIT-licensed.</Description>
+    <Description>A minimal, generic, 100% managed WebRTC data-channel library for C#/.NET (ICE-lite / DTLS / SCTP).</Description>
     <PackageProjectUrl>https://github.com/Wixely/CupriWebRTC</PackageProjectUrl>
     <RepositoryUrl>https://github.com/Wixely/CupriWebRTC</RepositoryUrl>
     <RepositoryType>git</RepositoryType>

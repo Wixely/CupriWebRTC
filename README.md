@@ -1,63 +1,92 @@
 # CupriWebRTC
 
-**A minimal, generic, 100% managed WebRTC data-channel library for C#/.NET — MIT-licensed.**
+**A minimal, generic, 100% managed WebRTC data-channel library for C#/.NET.**
 
 CupriWebRTC lets a .NET process be the *other end* of a browser's WebRTC connection: it implements just enough of the
 WebRTC stack — **ICE, DTLS, and SCTP** — to accept a browser's **DataChannel** and exchange messages over it. It does
 **not** do media (no SRTP/audio/video): its scope is the reliable, ordered **data** path.
 
-> **Status: early scaffolding.** The STUN layer is implemented and tested; ICE-lite, DTLS, and SCTP are next. See
-> [ROADMAP.md](ROADMAP.md).
+> **Status: the full stack is implemented and proven end-to-end.** Every wire layer is validated (STUN against the
+> RFC 5769 vector; CRC-32/CRC-32C against their standard check values), and a full-stack loopback test drives
+> **ICE → DTLS → SCTP** against the listener over real UDP and delivers a message. Remaining: validation against a
+> real browser, and reliability hardening (see [ROADMAP.md](ROADMAP.md)).
 
 ## Why it exists
 
-It was written for [CupriNet](https://github.com/Wixely/CupriNet) — which needs a node to accept browser WebRTC
-clients while staying **100% managed and permissively licensed**. The obvious managed option (SIPSorcery) carries a
-non-standard field-of-use licence restriction that is incompatible with a clean MIT dependency graph, and there is no
-other well-known *truly-permissive, pure-managed* C# WebRTC stack. So CupriWebRTC is a first-party, MIT alternative.
-
-It is deliberately built as a **generic library**, not a CupriNet component: any .NET app that needs a managed WebRTC
-DataChannel endpoint can use it. CupriNet consumes it through a thin binding, the same way it consumes CupriTor.
+It was written for [CupriNet](https://github.com/Wixely/CupriNet), which needs a node to accept browser WebRTC clients
+in a specific, **non-standard mode**: a **static, pre-published endpoint** — fixed ICE credentials, **ICE-lite**, and a
+known certificate fingerprint — that a browser can dial with **no signalling server**, accepting **any client
+certificate** because the peer is authenticated *above* the channel. General-purpose managed WebRTC stacks are large,
+built around the standard offer/answer flow, and don't cleanly support this static / blind-accept mode. CupriWebRTC is
+a small, fully-controlled, purpose-built alternative that does exactly this — and is a **generic library** any .NET app
+can use. See [docs/comparison-sipsorcery.md](docs/comparison-sipsorcery.md) for how it compares to the main managed
+WebRTC library. CupriNet consumes it through a thin binding, the same way it consumes CupriTor.
 
 ## Scope
 
 **In scope** (the data path a browser needs):
 
-- **STUN** (RFC 5389/8489) message codec — MESSAGE-INTEGRITY (HMAC-SHA1), FINGERPRINT (CRC-32), XOR-MAPPED-ADDRESS.
+- **STUN** (RFC 5389/8489) — MESSAGE-INTEGRITY (HMAC-SHA1), FINGERPRINT (CRC-32), XOR-MAPPED-ADDRESS.
 - **ICE-lite responder** — bind a UDP port, answer connectivity checks, learn the remote peer-reflexively. No
   candidate gathering, no trickle, no controlling role — the "reachable server" side of ICE.
-- **DTLS** (server role) over the ICE flow, via **BouncyCastle** (managed). Publishes a certificate fingerprint;
-  callers decide whether to verify the client's (CupriNet does not — it re-authenticates above the channel).
-- **SCTP** association over DTLS + the **DataChannel Establishment Protocol (DCEP)** — the reliable, ordered message
-  duplex a browser's `RTCDataChannel` talks to.
-- A small top-level API that emits opened DataChannels as a `SendAsync(bytes)` / `ReceiveAsync() -> bytes?` duplex.
+- **DTLS** (server role) over the ICE flow (BouncyCastle). Publishes a certificate fingerprint; accepts any client
+  cert by default (the caller re-authenticates above the channel).
+- **SCTP** association + the **DataChannel Establishment Protocol (DCEP)** — the reliable, ordered message duplex a
+  browser's `RTCDataChannel` talks to. Both the passive (responder) and active (initiator) roles.
+- A top-level **`WebRtcListener`** that assembles the stack on one socket and emits opened channels / messages, plus
+  the static **`WebRtcEndpointParameters`** to publish.
 
-**Out of scope:** SRTP / media, the full `RTCPeerConnection` offer/answer machinery, TURN relaying, trickle ICE, and
-the ICE *controlling* (full) agent role. A design goal is that the endpoint can be driven from **pre-published static
-parameters** (fixed ICE ufrag/pwd, known fingerprint, ICE-lite) so it needs no live signalling — which is exactly what
-CupriNet's "the signed link is the signalling" model wants, and is a legitimate generic mode (cf. WHIP-style static
-endpoints).
+**Out of scope:** SRTP / media, the full `RTCPeerConnection` offer/answer machinery, TURN relaying, and trickle ICE. A
+design goal is that the endpoint runs from **pre-published static parameters** (fixed ICE ufrag/pwd, known fingerprint,
+ICE-lite) so it needs **no live signalling** — which is what CupriNet's "the signed link is the signalling" model
+wants, and is a legitimate generic mode (cf. WHIP-style static endpoints).
+
+## Usage (sketch)
+
+```csharp
+await using var listener = new WebRtcListener(new IPEndPoint(IPAddress.Any, 0));
+_ = listener.RunAsync(cancellationToken);
+
+// Publish these so a browser can dial the endpoint with no signalling server.
+WebRtcEndpointParameters p = listener.Parameters; // ufrag, password, fingerprint, port
+
+listener.ChannelOpened  += ch  => Console.WriteLine($"channel opened: {ch.Label}");
+listener.MessageReceived += (stream, ppid, data) => { /* handle inbound message */ };
+// listener.SendMessage(streamId, Dcep.PpidString, bytes);
+```
 
 ## Design notes
 
-- **Managed + permissive only.** BCL where possible; **BouncyCastle** (MIT-X) for DTLS crypto — the same choice
-  CupriNet already makes. No native interop, no restrictive licences.
-- **Correctness to spec.** Wire layers are validated against RFC test vectors where they exist, then against a real
-  browser end to end.
+- **Managed + minimal.** BCL where possible; **BouncyCastle** for the DTLS handshake — the same crypto CupriNet
+  already uses. No native interop.
+- **Correctness to spec.** Wire layers are validated against RFC test vectors where they exist (STUN RFC 5769; the
+  CRC-32 and CRC-32C standard check values), and the whole stack is proven end-to-end over real UDP.
 - **Small surface.** Each layer (STUN → ICE → DTLS → SCTP → DataChannel) is independently testable.
+- **Minimal SCTP profile (first cut):** in-order single-chunk messages, cumulative SACK, no congestion control or
+  fragmentation yet — enough for DCEP and small messages over the low-loss DTLS channel; hardened later.
 
 ## Layout
 
 ```
 CupriWebRTC/
-  src/CupriWebRTC/            # the library
-    Stun/                     # STUN codec (done)
-    Ice/                      # ICE-lite responder (next)
-    Dtls/                     # DTLS server over UDP (BouncyCastle) (next)
-    Sctp/                     # SCTP association + DCEP DataChannel (next)
-  tests/CupriWebRTC.Tests/    # xUnit tests
+  src/CupriWebRTC/
+    Stun/            # STUN codec
+    Ice/             # ICE-lite responder + UDP endpoint
+    Dtls/            # DTLS server (BouncyCastle) + self-signed cert/fingerprint
+    Sctp/            # SCTP packet/chunks, association (both roles), DCEP, transport driver
+    WebRtcListener.cs, WebRtcEndpointParameters.cs   # the assembled endpoint
+  tests/CupriWebRTC.Tests/    # xUnit tests, incl. the full-stack UDP loopback
+  docs/comparison-sipsorcery.md
 ```
+
+## Building
+
+```
+dotnet test CupriWebRTC.slnx
+```
+
+Targets .NET 10. The only dependency is BouncyCastle (for the DTLS handshake).
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+See [LICENSE](LICENSE).

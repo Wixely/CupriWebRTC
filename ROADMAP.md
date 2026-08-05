@@ -5,7 +5,7 @@ stacks on it. The target first milestone: **a browser opens a DataChannel to a C
 messages**, with the endpoint driven from static, pre-published parameters (no live signalling).
 
 ## Phase 0 — Scaffolding ✅
-- Repo, MIT licence, Wixely identity, solution + projects, this roadmap.
+- Repo, Wixely identity, solution + projects, this roadmap.
 
 ## Phase 1 — STUN codec ✅
 - Message encode/decode; MESSAGE-INTEGRITY (HMAC-SHA1) add + verify; FINGERPRINT (CRC-32) add + verify;
