@@ -20,9 +20,13 @@ messages**, with the endpoint driven from static, pre-published parameters (no l
 - **Next:** the UDP socket loop that binds the port, demultiplexes STUN vs. DTLS, drives the responder, and tracks the
   selected peer address — lands with the DTLS layer (they share the socket).
 
-## Phase 3 — DTLS server (BouncyCastle)
-- DTLS server handshake over the ICE-selected UDP flow, using a self-signed cert; expose its **fingerprint**
-  (sha-256). Pluggable client-certificate policy (default: accept any — the caller authenticates above the channel).
+## Phase 3 — DTLS server (BouncyCastle) ✅ (core)
+- `DtlsCertificate`: self-signed ECDSA P-256 cert + sha-256 fingerprint (raw + SDP `AB:CD:…`).
+- `CupriTlsServer` / `DtlsServer`: DTLS 1.2 server (ECDHE-ECDSA AES-GCM) that **accepts any client certificate**
+  (identity is authenticated above the channel). **Proven:** a full handshake completes against a BouncyCastle DTLS
+  client over an in-memory transport, and application data flows both ways.
+- **Next:** bridge the BouncyCastle `DatagramTransport` to the ICE UDP flow (they share the port) — lands with the
+  top-level listener.
 
 ## Phase 4 — SCTP + DataChannel
 - Minimal **SCTP** association over DTLS (the hard part: INIT/COOKIE handshake, DATA/SACK, ordered reliable delivery),

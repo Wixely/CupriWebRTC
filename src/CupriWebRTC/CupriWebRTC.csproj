@@ -6,4 +6,9 @@
   <ItemGroup>
     <InternalsVisibleTo Include="CupriWebRTC.Tests" />
   </ItemGroup>
+
+  <ItemGroup>
+    <!-- DTLS (and its crypto) via BouncyCastle — managed, MIT-X, the same choice CupriNet makes. -->
+    <PackageReference Include="BouncyCastle.Cryptography" Version="2.6.2" />
+  </ItemGroup>
 </Project>
