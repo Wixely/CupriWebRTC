@@ -35,7 +35,7 @@ public class WebRtcListenerTests
         listener.ChannelOpened += channel =>
             channel.MessageReceived += (_, data) => received.TrySetResult((channel.Remote, data));
 
-        using var browser = BrowserClient.Connect(listener.LocalEndPoint, listener.Parameters);
+        using var browser = BrowserClient.Connect(listener.LocalEndPoint, listener.Parameters, "browser-solo");
         Assert.Equal(listener.Parameters.Fingerprint, browser.ServerFingerprint); // the browser pinned our published cert
         browser.OpenChannel("chat");
         browser.Send("hello from the browser");
@@ -68,9 +68,10 @@ public class WebRtcListenerTests
                 both.Signal();
             };
 
-        // Two independent browsers on their own sockets, hitting the listener's single UDP port concurrently.
-        using var alice = BrowserClient.Connect(listener.LocalEndPoint, listener.Parameters);
-        using var bob = BrowserClient.Connect(listener.LocalEndPoint, listener.Parameters);
+        // Two independent browsers (distinct ICE ufrags, as real browsers generate) on their own sockets, hitting the
+        // listener's single UDP port concurrently.
+        using var alice = BrowserClient.Connect(listener.LocalEndPoint, listener.Parameters, "alice-ufrag");
+        using var bob = BrowserClient.Connect(listener.LocalEndPoint, listener.Parameters, "bob-ufrag");
         alice.OpenChannel("chat");
         bob.OpenChannel("chat");
         alice.Send("from-alice");
@@ -85,6 +86,79 @@ public class WebRtcListenerTests
 
         await cts.CancelAsync();
         try { await run; } catch (OperationCanceledException) { }
+    }
+
+    [Fact]
+    public async Task NatRebinding_SamePeerFromNewAddress_MigratesTheSession_NotANewOne()
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(40));
+        var ct = cts.Token;
+
+        await using var listener = new WebRtcListener(new IPEndPoint(IPAddress.Loopback, 0));
+        var run = listener.RunAsync(ct);
+
+        using var alice = BrowserClient.Connect(listener.LocalEndPoint, listener.Parameters, "alice-rebind");
+        alice.OpenChannel("chat");
+        await WaitForAsync(() => listener.SessionCount == 1, TimeSpan.FromSeconds(10));
+
+        // Simulate a NAT rebinding: the SAME peer (same ICE ufrag) sends its next consent check from a NEW socket/port.
+        using var rebound = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
+        SendConnectivityCheck(rebound, listener.LocalEndPoint, listener.Parameters, "alice-rebind");
+        rebound.Client.ReceiveTimeout = 5000;
+        var from = new IPEndPoint(IPAddress.Any, 0);
+        Assert.True(StunMessage.TryParse(rebound.Receive(ref from), out var reply));
+        Assert.Equal(StunMessageTypes.BindingSuccessResponse, reply.MessageType); // endpoint answered the rebound check
+
+        // Keyed by ufrag, the session migrates to the new address — still exactly one session, not a second one.
+        await Task.Delay(300, ct); // let the ICE loop process the migration
+        Assert.Equal(1, listener.SessionCount);
+
+        await cts.CancelAsync();
+        try { await run; } catch (OperationCanceledException) { }
+    }
+
+    [Fact]
+    public async Task IdleSession_IsEvictedByTheTimer_AndClosesTheChannel()
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(40));
+        var ct = cts.Token;
+
+        await using var listener = new WebRtcListener(
+            new IPEndPoint(IPAddress.Loopback, 0), sessionIdleTimeout: TimeSpan.FromSeconds(1));
+        var run = listener.RunAsync(ct);
+
+        var closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        listener.ChannelOpened += channel => channel.Closed += () => closed.TrySetResult();
+
+        using var browser = BrowserClient.Connect(listener.LocalEndPoint, listener.Parameters, "idle-peer");
+        browser.OpenChannel("chat");
+        await WaitForAsync(() => listener.SessionCount == 1, TimeSpan.FromSeconds(10));
+
+        // No further ICE consent and no data: the idle sweep should evict the session and close its channel.
+        Assert.True(closed.Task.Wait(TimeSpan.FromSeconds(15)), "idle session was not evicted");
+        await WaitForAsync(() => listener.SessionCount == 0, TimeSpan.FromSeconds(5));
+        Assert.Equal(0, listener.SessionCount);
+
+        await cts.CancelAsync();
+        try { await run; } catch (OperationCanceledException) { }
+    }
+
+    private static void SendConnectivityCheck(UdpClient udp, IPEndPoint server, WebRtcEndpointParameters parameters, string clientUfrag)
+    {
+        var check = new StunMessage(StunMessageTypes.BindingRequest, StunMessage.NewTransactionId());
+        check.Add(StunAttributes.Username, Encoding.UTF8.GetBytes($"{parameters.IceUfrag}:{clientUfrag}"));
+        check.AddMessageIntegrity(Encoding.UTF8.GetBytes(parameters.IcePassword));
+        check.AddFingerprint();
+        var bytes = check.Encode();
+        udp.Send(bytes, bytes.Length, server);
+    }
+
+    private static async Task WaitForAsync(Func<bool> condition, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (!condition() && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
+        Assert.True(condition(), "condition was not met within the timeout");
     }
 
     /// <summary>A minimal "browser": its own UDP socket, an ICE check, a DTLS client (pinning the server cert), an
@@ -107,25 +181,20 @@ public class WebRtcListenerTests
         public byte[] ServerFingerprint { get; }
         public IPEndPoint LocalEndPoint => (IPEndPoint)_udp.Client.LocalEndPoint!;
 
-        public static BrowserClient Connect(IPEndPoint server, WebRtcEndpointParameters parameters)
+        public static BrowserClient Connect(IPEndPoint server, WebRtcEndpointParameters parameters, string clientUfrag)
         {
             var udp = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
 
-            // 1. ICE — a STUN Binding check keyed with the published password gets a Binding Success.
-            var stunKey = Encoding.UTF8.GetBytes(parameters.IcePassword);
-            var check = new StunMessage(StunMessageTypes.BindingRequest, StunMessage.NewTransactionId());
-            check.Add(StunAttributes.Username, Encoding.UTF8.GetBytes($"{parameters.IceUfrag}:browser"));
-            check.AddMessageIntegrity(stunKey);
-            check.AddFingerprint();
-            var checkBytes = check.Encode();
-            udp.Send(checkBytes, checkBytes.Length, server);
+            // 1. ICE — a STUN Binding check keyed with the published password gets a Binding Success. Our own ufrag
+            // (unique per client) rides in the USERNAME; the server keys the session by it.
+            SendConnectivityCheck(udp, server, parameters, clientUfrag);
 
             udp.Client.ReceiveTimeout = 5000;
             var from = new IPEndPoint(IPAddress.Any, 0);
             var stunReply = udp.Receive(ref from);
             Assert.True(StunMessage.TryParse(stunReply, out var stunResponse));
             Assert.Equal(StunMessageTypes.BindingSuccessResponse, stunResponse.MessageType);
-            Assert.True(stunResponse.VerifyMessageIntegrity(stunKey));
+            Assert.True(stunResponse.VerifyMessageIntegrity(Encoding.UTF8.GetBytes(parameters.IcePassword)));
 
             // 2. DTLS — connect as the client; capture the server cert fingerprint (to compare with the published one).
             var transport = new UdpDtlsClientTransport(udp, server);

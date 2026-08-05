@@ -34,8 +34,10 @@ WebRTC library. CupriNet consumes it through a thin binding, the same way it con
 - **SCTP** association + the **DataChannel Establishment Protocol (DCEP)** — the reliable, ordered message duplex a
   browser's `RTCDataChannel` talks to. Both the passive (responder) and active (initiator) roles.
 - A top-level **`WebRtcListener`** that assembles the stack on one socket and serves **many** peers at once —
-  inbound datagrams are demultiplexed to a per-remote session, so each browser is its own `WebRtcChannel` (with its
-  own messages), bounded by a concurrent-session cap. Plus the static **`WebRtcEndpointParameters`** to publish.
+  inbound datagrams are demultiplexed to a per-peer session (keyed by the peer's ICE ufrag, so a session **survives a
+  NAT rebinding** by migrating to the new address), each browser is its own `WebRtcChannel` (with its own messages),
+  idle sessions are evicted on a timer, and the whole set is bounded by a concurrent-session cap. Plus the static
+  **`WebRtcEndpointParameters`** to publish.
 
 **Out of scope:** SRTP / media, the full `RTCPeerConnection` offer/answer machinery, TURN relaying, and trickle ICE. A
 design goal is that the endpoint runs from **pre-published static parameters** (fixed ICE ufrag/pwd, known fingerprint,

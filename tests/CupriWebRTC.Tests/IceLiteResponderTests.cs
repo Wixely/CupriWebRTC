@@ -30,9 +30,10 @@ public class IceLiteResponderTests
         // keyed with OUR password (the peer being tested).
         var request = BindingRequest($"{Local.Ufrag}:browserUfrag", key);
 
-        var response = responder.Handle(request, Remote, out var outcome);
+        var response = responder.Handle(request, Remote, out var outcome, out var remoteUfrag);
 
         Assert.Equal(IceLiteResponder.Outcome.Responded, outcome);
+        Assert.Equal("browserUfrag", remoteUfrag);             // the peer's own ufrag, extracted for session keying
         Assert.True(StunMessage.TryParse(response!, out var parsed));
         Assert.Equal(StunMessageTypes.BindingSuccessResponse, parsed.MessageType);
         Assert.Equal(Remote, parsed.GetXorMappedAddress());   // reflexive address echoed back
@@ -45,7 +46,7 @@ public class IceLiteResponderTests
     {
         var responder = new IceLiteResponder(Local);
         var request = BindingRequest($"{Local.Ufrag}:browserUfrag", Encoding.UTF8.GetBytes("not-our-password"));
-        Assert.Null(responder.Handle(request, Remote, out var outcome));
+        Assert.Null(responder.Handle(request, Remote, out var outcome, out _));
         Assert.Equal(IceLiteResponder.Outcome.Unauthenticated, outcome);
     }
 
@@ -54,7 +55,7 @@ public class IceLiteResponderTests
     {
         var responder = new IceLiteResponder(Local);
         var request = BindingRequest("someoneElse:browserUfrag", Encoding.UTF8.GetBytes(Local.Password));
-        Assert.Null(responder.Handle(request, Remote, out var outcome));
+        Assert.Null(responder.Handle(request, Remote, out var outcome, out _));
         Assert.Equal(IceLiteResponder.Outcome.BadRequest, outcome);
     }
 
@@ -62,7 +63,7 @@ public class IceLiteResponderTests
     public void NonBindingRequest_IsIgnored()
     {
         var responder = new IceLiteResponder(Local);
-        Assert.Null(responder.Handle([1, 2, 3], Remote, out var outcome));
+        Assert.Null(responder.Handle([1, 2, 3], Remote, out var outcome, out _));
         Assert.Equal(IceLiteResponder.Outcome.Ignored, outcome);
     }
 

@@ -43,11 +43,14 @@ public sealed class IceLiteResponder
 
     /// <summary>
     /// Handles one inbound datagram from <paramref name="remote"/>. Returns the response bytes to send back to that
-    /// same address, or <c>null</c> (with <paramref name="outcome"/> explaining why).
+    /// same address, or <c>null</c> (with <paramref name="outcome"/> explaining why). On a valid check,
+    /// <paramref name="remoteUfrag"/> is the peer's own ICE ufrag (the part after our prefix in the USERNAME) — unique
+    /// per peer, so it identifies a browser across NAT rebindings even though all peers share our ICE-lite credentials.
     /// </summary>
-    public byte[]? Handle(ReadOnlySpan<byte> datagram, IPEndPoint remote, out Outcome outcome)
+    public byte[]? Handle(ReadOnlySpan<byte> datagram, IPEndPoint remote, out Outcome outcome, out string? remoteUfrag)
     {
         ArgumentNullException.ThrowIfNull(remote);
+        remoteUfrag = null;
 
         if (!StunMessage.TryParse(datagram, out var request) || request.MessageType != StunMessageTypes.BindingRequest)
         {
@@ -76,6 +79,7 @@ public sealed class IceLiteResponder
         response.AddMessageIntegrity(_passwordKey);
         response.AddFingerprint();
 
+        remoteUfrag = Encoding.UTF8.GetString(username.AsSpan(_usernamePrefix.Length)); // the peer's own ufrag
         outcome = Outcome.Responded;
         return response.Encode();
     }

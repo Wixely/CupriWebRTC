@@ -33,6 +33,10 @@ public sealed class IceUdpEndpoint : IAsyncDisposable
     /// <summary>Raised for non-STUN (DTLS) datagrams on this port — the DTLS layer subscribes here.</summary>
     public event Action<ReadOnlyMemory<byte>, IPEndPoint>? DtlsDatagramReceived;
 
+    /// <summary>Raised when a STUN connectivity check is answered: (the peer's own ICE ufrag, its source address).
+    /// The ufrag is unique per peer, so a listener keys sessions by it and migrates the address on a NAT rebind.</summary>
+    public event Action<string, IPEndPoint>? ConnectivityCheck;
+
     /// <summary>Sends a datagram from this port (used by the DTLS layer to reply on the same flow).</summary>
     public ValueTask<int> SendAsync(ReadOnlyMemory<byte> datagram, IPEndPoint remote, CancellationToken cancellationToken = default)
         => _udp.SendAsync(datagram, remote, cancellationToken);
@@ -63,11 +67,13 @@ public sealed class IceUdpEndpoint : IAsyncDisposable
             var first = buffer[0];
             if (first <= 3) // STUN
             {
-                var response = _responder.Handle(buffer, result.RemoteEndPoint, out var outcome);
+                var response = _responder.Handle(buffer, result.RemoteEndPoint, out var outcome, out var remoteUfrag);
                 if (outcome == IceLiteResponder.Outcome.Responded && response is not null)
                 {
                     SelectedRemote = result.RemoteEndPoint;
                     await _udp.SendAsync(response, result.RemoteEndPoint, cancellationToken).ConfigureAwait(false);
+                    if (remoteUfrag is not null)
+                        ConnectivityCheck?.Invoke(remoteUfrag, result.RemoteEndPoint);
                 }
             }
             else if (first is >= 20 and <= 63) // DTLS

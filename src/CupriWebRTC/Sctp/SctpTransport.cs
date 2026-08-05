@@ -14,7 +14,6 @@ public sealed class SctpTransport : IDisposable
     private readonly DatagramTransport _transport;
     private readonly SctpAssociation _association;
     private readonly Lock _gate = new();
-    private readonly Thread _receiveLoop;
     private volatile bool _closed;
 
     public SctpTransport(DatagramTransport transport, SctpAssociation association)
@@ -23,7 +22,6 @@ public sealed class SctpTransport : IDisposable
         _association = association ?? throw new ArgumentNullException(nameof(association));
         _association.ChannelOpened += channel => ChannelOpened?.Invoke(channel);
         _association.MessageReceived += (stream, ppid, data) => MessageReceived?.Invoke(stream, ppid, data);
-        _receiveLoop = new Thread(ReceiveLoop) { IsBackground = true, Name = "cupriwebrtc-sctp" };
     }
 
     /// <summary>Raised when the peer opens a data channel.</summary>
@@ -38,8 +36,12 @@ public sealed class SctpTransport : IDisposable
     /// <summary>True once the SCTP handshake has completed.</summary>
     public bool IsEstablished => _association.IsEstablished;
 
-    /// <summary>Starts the receive loop (call before initiating or awaiting a handshake).</summary>
-    public void Start() => _receiveLoop.Start();
+    /// <summary>Starts the receive loop on a dedicated background thread (call before initiating/awaiting a handshake).</summary>
+    public void Start() => new Thread(ReceiveLoop) { IsBackground = true, Name = "cupriwebrtc-sctp" }.Start();
+
+    /// <summary>Runs the receive loop on the <b>calling</b> thread until the transport closes — lets an owner drive the
+    /// whole session (DTLS handshake then SCTP) on one thread instead of spawning a second. Returns when closed.</summary>
+    public void RunReceiveLoop() => ReceiveLoop();
 
     /// <summary>Actively initiate the association (INIT). Omit this side to be the passive responder.</summary>
     public void Associate()

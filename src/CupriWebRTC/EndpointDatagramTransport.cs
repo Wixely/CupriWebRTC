@@ -14,7 +14,7 @@ internal sealed class EndpointDatagramTransport : DatagramTransport
 {
     private const int Mtu = 1500;
     private readonly IceUdpEndpoint _endpoint;
-    private readonly IPEndPoint _remote;
+    private volatile IPEndPoint _remote;
     private readonly BlockingCollection<byte[]> _inbound = new();
 
     public EndpointDatagramTransport(IceUdpEndpoint endpoint, IPEndPoint remote)
@@ -22,6 +22,10 @@ internal sealed class EndpointDatagramTransport : DatagramTransport
         _endpoint = endpoint;
         _remote = remote;
     }
+
+    /// <summary>Repoints outbound sends at a new peer address after a NAT rebinding (the DTLS/SCTP state is unchanged —
+    /// it rides on top of whatever 5-tuple the datagrams now flow over).</summary>
+    public void UpdateRemote(IPEndPoint remote) => _remote = remote;
 
     /// <summary>Feed one inbound DTLS datagram (called from the ICE receive loop).</summary>
     public void Enqueue(ReadOnlyMemory<byte> datagram)

@@ -51,14 +51,24 @@ messages**, with the endpoint driven from static, pre-published parameters (no l
   fingerprint, port) to publish, plus a per-channel `ChannelOpened` → `WebRtcChannel` (its own `MessageReceived` /
   `Send` / `Closed`).
 - **Multi-client ✅ (0.1.1)** — one UDP socket serves **many** peers: inbound datagrams are demultiplexed to a
-  per-remote session (bridge → DTLS → SCTP), bounded by a concurrent-session cap (a Ward) and evicted when the
-  transport drops or the handshake times out. Each peer is an independent channel.
+  per-peer session (bridge → DTLS → SCTP), bounded by a concurrent-session cap (a Ward). Each peer is an independent
+  channel.
+- **Session lifecycle hardening ✅ (0.1.2)**:
+  - *NAT rebinding* — sessions are keyed by the peer's **ICE ufrag** (unique per peer, in every connectivity check),
+    not its address, so when a peer's checks arrive from a new address the session **migrates** (its DTLS/SCTP state is
+    untouched — it just flows over the new 5-tuple) instead of being seen as a new peer.
+    (`IceLiteResponder` now surfaces the remote ufrag; `EndpointDatagramTransport.UpdateRemote` repoints sends.)
+  - *Idle eviction by timer* — a thread-pool sweep evicts sessions with no activity (no ICE consent, no data) past an
+    idle timeout; ICE consent checks (~every 5s, RFC 7675) keep a healthy-but-quiet channel alive. Closing an idle
+    session also unblocks one still stuck in its DTLS handshake.
+  - *One thread per session* — the DTLS handshake and the SCTP receive loop now run on a single session thread
+    (`SctpTransport.RunReceiveLoop`) instead of two; the whole set stays bounded by the session cap.
 - **Full-stack loopback tests ✅** — a real UDP client drives ICE → DTLS → SCTP against the listener, verifies the
-  published fingerprint matches the served cert, opens a DataChannel and delivers a message; a second test runs **two**
-  clients over the one socket and asserts each is demuxed to its own peer. Everything a browser does, minus the browser.
+  published fingerprint, opens a DataChannel and delivers a message; a **two-client** test asserts each is demuxed to
+  its own peer; a **rebinding** test asserts a same-ufrag check from a new address migrates (one session, not two);
+  and an **idle** test asserts a silent session is evicted and its channel closed. 30 pass.
 - **Next:** validate against a **real Chromium** (browser automation) — the static-parameter / ICE-lite /
-  accept-any-cert mode against the actual browser WebRTC stack; then fragmentation/reliability hardening and
-  idle-session eviction by timer (today a half-open peer is bounded by the DTLS handshake timeout + the session cap).
+  accept-any-cert mode against the actual browser WebRTC stack; then SCTP fragmentation/reliability hardening.
 
 ## Explicitly out of scope
 - Media (SRTP/audio/video), TURN, trickle ICE, the ICE controlling role, and the full RTCPeerConnection SDP engine.
