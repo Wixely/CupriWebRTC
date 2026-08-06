@@ -17,14 +17,17 @@
   <script>
     // Params come from the URL fragment the console host prints:
     //   probe.html#ufrag=..&pwd=..&fp=AA:BB:..&port=45820&ip=127.0.0.1
-    const q = new URLSearchParams(location.hash.slice(1));
-    const P = {
-      ufrag: q.get('ufrag'),
-      pwd:   q.get('pwd'),
-      fp:    q.get('fp'),               // sha-256 fingerprint, colon-hex, uppercase
-      port:  q.get('port'),
-      ip:    q.get('ip') || '127.0.0.1',
-    };
+    // Parse the fragment WITHOUT URLSearchParams: it would turn '+' into a space, corrupting ICE ufrag/pwd (which use
+    // the base64-ish ICE charset incl. '+' and '/'). decodeURIComponent leaves '+' intact, so the printed URL pastes
+    // safely whether the '+' is literal or %2B-encoded.
+    const P = {};
+    for (const kv of location.hash.slice(1).split('&')) {
+      if (!kv) continue;
+      const i = kv.indexOf('=');
+      const k = i < 0 ? kv : kv.slice(0, i);
+      P[k] = i < 0 ? '' : decodeURIComponent(kv.slice(i + 1));
+    }
+    P.ip = P.ip || '127.0.0.1';
 
     const logEl = document.getElementById('log');
     const statusEl = document.getElementById('status');
