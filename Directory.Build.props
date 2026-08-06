@@ -10,7 +10,7 @@
 
   <!-- Package metadata (applied when a project opts into packing). -->
   <PropertyGroup>
-    <Version>0.1.2</Version>
+    <Version>0.2.0</Version>
     <Authors>Wixely</Authors>
     <Company>Wixely</Company>
     <Product>CupriWebRTC</Product>
@@ -19,7 +19,7 @@
     <RepositoryUrl>https://github.com/Wixely/CupriWebRTC</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageTags>webrtc;ice;stun;dtls;sctp;datachannel;p2p;managed</PackageTags>
+    <PackageTags>webrtc;ice;stun;dtls;dtls13;sctp;datachannel;p2p;managed</PackageTags>
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
     <IsPackable>false</IsPackable>

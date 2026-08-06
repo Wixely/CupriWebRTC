@@ -6,10 +6,12 @@ CupriWebRTC lets a .NET process be the *other end* of a browser's WebRTC connect
 WebRTC stack — **ICE, DTLS, and SCTP** — to accept a browser's **DataChannel** and exchange messages over it. It does
 **not** do media (no SRTP/audio/video): its scope is the reliable, ordered **data** path.
 
-> **Status: the full stack is implemented and proven end-to-end.** Every wire layer is validated (STUN against the
-> RFC 5769 vector; CRC-32/CRC-32C against their standard check values), and a full-stack loopback test drives
-> **ICE → DTLS → SCTP** against the listener over real UDP and delivers a message. Remaining: validation against a
-> real browser, and reliability hardening (see [ROADMAP.md](ROADMAP.md)).
+> **Status: proven against a real browser.** Chromium opens a DataChannel to a running endpoint over **DTLS 1.3** and
+> a message round-trips, with no signalling server. Every wire layer is validated against its RFC vectors (STUN
+> RFC 5769; CRC-32/CRC-32C check values; HKDF RFC 5869; ChaCha20-Poly1305 RFC 8439; X25519 RFC 7748; the TLS 1.3 key
+> schedule reproduced from the **RFC 8448** traces), and full-stack loopback tests drive **ICE → DTLS → SCTP** over
+> real UDP on both DTLS versions. Remaining: Firefox/Safari passes, reference-client interop, SCTP reliability
+> hardening, and an external security review of the DTLS 1.3 code (see [ROADMAP.md](ROADMAP.md)).
 
 ## Why it exists
 
@@ -29,8 +31,11 @@ WebRTC library. CupriNet consumes it through a thin binding, the same way it con
 - **STUN** (RFC 5389/8489) — MESSAGE-INTEGRITY (HMAC-SHA1), FINGERPRINT (CRC-32), XOR-MAPPED-ADDRESS.
 - **ICE-lite responder** — bind a UDP port, answer connectivity checks, learn the remote peer-reflexively. No
   candidate gathering, no trickle, no controlling role — the "reachable server" side of ICE.
-- **DTLS** (server role) over the ICE flow (BouncyCastle). Publishes a certificate fingerprint; accepts any client
-  cert by default (the caller re-authenticates above the channel).
+- **DTLS** (server role) over the ICE flow, **both 1.3 and 1.2**. Publishes a certificate fingerprint; accepts any
+  client cert by default (the caller re-authenticates above the channel). DTLS **1.3** (RFC 9147) is implemented here,
+  in managed C#, because every current browser now offers it first and refuses to fall back — and no managed .NET
+  DTLS 1.3 server existed. The first ClientHello is sniffed and dispatched to the 1.3 server or to the BouncyCastle
+  1.2 one, which is kept for 1.2-only peers. See **[docs/dtls-1.3.md](docs/dtls-1.3.md)**.
 - **SCTP** association + the **DataChannel Establishment Protocol (DCEP)** — the reliable, ordered message duplex a
   browser's `RTCDataChannel` talks to. Both the passive (responder) and active (initiator) roles.
 - A top-level **`WebRtcListener`** that assembles the stack on one socket and serves **many** peers at once —
@@ -66,10 +71,13 @@ listener.ChannelOpened += channel =>
 
 ## Design notes
 
-- **Managed + minimal.** BCL where possible; **BouncyCastle** for the DTLS handshake — the same crypto CupriNet
-  already uses. No native interop.
+- **Managed + minimal.** BCL where possible; **BouncyCastle** for crypto primitives — the same choice CupriNet makes.
+  No native interop. The DTLS 1.3 layer reaches its primitives through one small interface, so the "which library?"
+  question stays out of the protocol code and is answerable later without touching it.
 - **Correctness to spec.** Wire layers are validated against RFC test vectors where they exist (STUN RFC 5769; the
-  CRC-32 and CRC-32C standard check values), and the whole stack is proven end-to-end over real UDP.
+  CRC-32 and CRC-32C check values; RFC 5869/7748/8439 for the DTLS 1.3 primitives; the RFC 8448 traces for the TLS 1.3
+  key schedule), the whole stack is proven end-to-end over real UDP, and the DTLS 1.3 handshake is verified against a
+  real browser and decoded in Wireshark.
 - **Small surface.** Each layer (STUN → ICE → DTLS → SCTP → DataChannel) is independently testable.
 - **Minimal SCTP profile (first cut):** in-order single-chunk messages, cumulative SACK, no congestion control or
   fragmentation yet — enough for DCEP and small messages over the low-loss DTLS channel; hardened later.
@@ -81,11 +89,13 @@ CupriWebRTC/
   src/CupriWebRTC/
     Stun/            # STUN codec
     Ice/             # ICE-lite responder + UDP endpoint
-    Dtls/            # DTLS server (BouncyCastle) + self-signed cert/fingerprint
+    Dtls/            # version dispatch, the secured-transport seam, cert/fingerprint, BouncyCastle 1.2 policy
+    Dtls13/          # the managed DTLS 1.3 server: record layer, key schedule, handshake, crypto seam
     Sctp/            # SCTP packet/chunks, association (both roles), DCEP, transport driver
     WebRtcListener.cs, WebRtcEndpointParameters.cs   # the assembled endpoint
-  tests/CupriWebRTC.Tests/    # xUnit tests, incl. the full-stack UDP loopback
-  docs/comparison-sipsorcery.md
+  tests/CupriWebRTC.Tests/    # xUnit tests, incl. RFC vectors and the full-stack UDP loopback
+  probe/CupriWebRTC.BrowserProbe/   # the real-browser interop probe (echo host + probe.html)
+  docs/dtls-1.3.md, docs/comparison-sipsorcery.md
 ```
 
 ## Building

@@ -22,3 +22,11 @@ packages/
 # OS noise
 .DS_Store
 Thumbs.db
+
+# DTLS debugging output (CUPRIWEBRTC_PCAP / CUPRIWEBRTC_SSLKEYLOG). A key log holds the *live* traffic secrets of a
+# real session and deprotects it completely — it must never be committed. See docs/dtls-1.3.md.
+*.pcap
+*.pcapng
+*keylog*.log
+*keylog*.txt
+sslkeys*.log
