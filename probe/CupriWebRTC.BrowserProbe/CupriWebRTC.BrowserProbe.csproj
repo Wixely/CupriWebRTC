@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Throwaway browser-interop probe: binds a WebRtcListener on loopback, prints its published params, and echoes any
+    DataChannel message. Point a real browser at probe.html (with the params in the URL fragment) to validate that
+    Chromium opens a DataChannel to our endpoint from synthesised SDP (no signalling server). Not part of the build/CI.
+    Run it with: dotnet run against this project.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <!-- The probe HTML is hand-authored; don't let the root's warnings-as-errors trip on the sample. -->
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\CupriWebRTC\CupriWebRTC.csproj" />
+  </ItemGroup>
+
+</Project>

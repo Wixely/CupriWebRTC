@@ -1,0 +1,102 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>PROBE:PENDING</title>
+  <style>
+    body { font: 14px/1.5 system-ui, sans-serif; margin: 2rem; }
+    #status { font-weight: 700; font-size: 1.2rem; }
+    pre { background: #111; color: #0f0; padding: 1rem; overflow: auto; max-height: 60vh; }
+  </style>
+</head>
+<body>
+  <h1>CupriWebRTC browser-interop probe</h1>
+  <div id="status">PENDING…</div>
+  <pre id="log"></pre>
+
+  <script>
+    // Params come from the URL fragment the console host prints:
+    //   probe.html#ufrag=..&pwd=..&fp=AA:BB:..&port=45820&ip=127.0.0.1
+    const q = new URLSearchParams(location.hash.slice(1));
+    const P = {
+      ufrag: q.get('ufrag'),
+      pwd:   q.get('pwd'),
+      fp:    q.get('fp'),               // sha-256 fingerprint, colon-hex, uppercase
+      port:  q.get('port'),
+      ip:    q.get('ip') || '127.0.0.1',
+    };
+
+    const logEl = document.getElementById('log');
+    const statusEl = document.getElementById('status');
+    function log(m) { logEl.textContent += m + '\n'; }
+    function setStatus(s) {
+      statusEl.textContent = s;
+      document.title = 'PROBE:' + s;
+      window.__probeResult = s;          // read by automation via evaluate()
+    }
+
+    // Build the SDP answer purely from the published static params (Intonation-as-signalling — no server round-trip).
+    function buildAnswer(offerSdp) {
+      const midMatch = /a=mid:(\S+)/.exec(offerSdp);
+      const mid = midMatch ? midMatch[1] : '0';
+      return [
+        'v=0',
+        'o=- 0 0 IN IP4 ' + P.ip,
+        's=-',
+        't=0 0',
+        'a=group:BUNDLE ' + mid,
+        'a=msid-semantic: WMS',
+        'm=application ' + P.port + ' UDP/DTLS/SCTP webrtc-datachannel',
+        'c=IN IP4 ' + P.ip,
+        'a=ice-lite',
+        'a=ice-ufrag:' + P.ufrag,
+        'a=ice-pwd:' + P.pwd,
+        'a=fingerprint:sha-256 ' + P.fp,
+        'a=setup:passive',
+        'a=mid:' + mid,
+        'a=sctp-port:5000',
+        'a=max-message-size:262144',
+        'a=candidate:1 1 udp 2130706431 ' + P.ip + ' ' + P.port + ' typ host',
+        'a=end-of-candidates',
+        '',
+      ].join('\r\n');
+    }
+
+    async function run() {
+      if (!P.ufrag || !P.pwd || !P.fp || !P.port) {
+        setStatus('FAIL:missing-params');
+        return;
+      }
+      log('params: ' + JSON.stringify(P));
+
+      const pc = new RTCPeerConnection({ iceServers: [] });
+      pc.oniceconnectionstatechange = () => log('iceConnectionState=' + pc.iceConnectionState);
+      pc.onconnectionstatechange   = () => log('connectionState=' + pc.connectionState);
+      pc.onicegatheringstatechange = () => log('iceGatheringState=' + pc.iceGatheringState);
+      pc.onicecandidate = (e) => { if (e.candidate) log('local candidate: ' + e.candidate.candidate); };
+
+      const dc = pc.createDataChannel('probe');
+      dc.onopen = () => { log('DATACHANNEL OPEN → sending'); dc.send('hello from chrome'); };
+      dc.onmessage = (e) => { log('DATACHANNEL MESSAGE: ' + e.data); setStatus('SUCCESS'); };
+      dc.onerror = (e) => log('datachannel error: ' + (e.error ? e.error.message : e));
+
+      try {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        log('--- offer ---\n' + offer.sdp);
+        const answer = buildAnswer(offer.sdp);
+        log('--- synthesised answer ---\n' + answer);
+        await pc.setRemoteDescription({ type: 'answer', sdp: answer });
+        log('remote description set; connecting…');
+      } catch (err) {
+        setStatus('FAIL:' + (err && err.message ? err.message : err));
+        return;
+      }
+
+      setTimeout(() => { if (window.__probeResult !== 'SUCCESS') setStatus('FAIL:timeout(' + pc.iceConnectionState + '/' + pc.connectionState + ')'); }, 20000);
+    }
+
+    run();
+  </script>
+</body>
+</html>

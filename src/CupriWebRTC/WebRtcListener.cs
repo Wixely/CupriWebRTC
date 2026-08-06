@@ -78,6 +78,10 @@ public sealed class WebRtcListener : IAsyncDisposable
     /// <summary>Raised when any peer opens a data channel, carrying a self-contained <see cref="WebRtcChannel"/>.</summary>
     public event Action<WebRtcChannel>? ChannelOpened;
 
+    /// <summary>Raised when a peer's session fails to establish (e.g. the DTLS handshake), with the peer address and
+    /// the cause — for observability/diagnostics. The session is evicted regardless.</summary>
+    public event Action<IPEndPoint, Exception>? SessionFaulted;
+
     /// <summary>Runs the endpoint (ICE receive loop) until cancelled.</summary>
     public Task RunAsync(CancellationToken cancellationToken) => _ice.RunAsync(cancellationToken);
 
@@ -141,9 +145,10 @@ public sealed class WebRtcListener : IAsyncDisposable
                 var secured = _dtls.Accept(session.Bridge); // blocks until the DTLS handshake completes (or times out)
                 sctp = new SctpTransport(secured, new SctpAssociation());
             }
-            catch
+            catch (Exception ex)
             {
-                Evict(session); // handshake failed / peer went away — free the slot
+                SessionFaulted?.Invoke(session.Remote, ex); // handshake failed / peer went away
+                Evict(session); // free the slot
                 return;
             }
 

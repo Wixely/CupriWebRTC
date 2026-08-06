@@ -16,6 +16,8 @@ internal sealed class CupriTlsServer(BcTlsCrypto crypto, DtlsCertificate certifi
     private readonly BcTlsCrypto _crypto = crypto;
     private readonly DtlsCertificate _certificate = certificate;
 
+    // DTLS 1.2 only: BouncyCastle 2.6.2's DtlsServerProtocol does not support the DTLS 1.3 server role (negotiating
+    // 1.3 throws internal_error in NegotiatedVersionDtlsServer). Modern browsers offer 1.3 but fall back to 1.2.
     protected override ProtocolVersion[] GetSupportedVersions() => ProtocolVersion.DTLSv12.Only();
 
     protected override int[] GetSupportedCipherSuites() =>
