@@ -57,8 +57,15 @@ public sealed class DtlsCertificate
     {
         random ??= new SecureRandom();
 
-        var x9 = ECNamedCurveTable.GetByName("secp256r1");
-        var domain = new ECDomainParameters(x9.Curve, x9.G, x9.N, x9.H, x9.GetSeed());
+        // The domain parameters MUST carry the curve's OID (ECNamedDomainParameters), not just its arithmetic.
+        // Without it BouncyCastle writes the SubjectPublicKeyInfo with *explicit* curve parameters — the prime, a, b,
+        // the base point, the order — instead of the named-curve OID. That is legal X.509 but RFC 5480 §2.1.1
+        // forbids it for TLS, and BoringSSL (so: every Chromium browser) rejects such a certificate outright with a
+        // decode_error alert, killing the handshake. It stayed hidden while browsers never got far enough to parse
+        // our certificate at all.
+        var oid = ECNamedCurveTable.GetOid("secp256r1");
+        var x9 = ECNamedCurveTable.GetByOid(oid);
+        var domain = new ECNamedDomainParameters(oid, x9);
         var keyGen = new ECKeyPairGenerator("ECDSA");
         keyGen.Init(new ECKeyGenerationParameters(domain, random));
         var keyPair = keyGen.GenerateKeyPair();
