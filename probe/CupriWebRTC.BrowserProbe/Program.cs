@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using CupriWebRTC;
+using CupriWebRTC.Dtls13;
 using CupriWebRTC.Ice;
 using CupriWebRTC.Sctp;
 
@@ -11,11 +12,24 @@ using CupriWebRTC.Sctp;
 
 var port = args.Length > 0 && int.TryParse(args[0], out var p) ? p : 45820;
 
+// The DTLS 1.3 policy is env-tunable so a failing browser handshake can be bisected feature by feature without a
+// rebuild: CUPRIWEBRTC_NO_COOKIE=1 skips the HelloRetryRequest round, CUPRIWEBRTC_NO_CERTREQ=1 stops asking the peer
+// for a certificate.
+var dtls13 = new Dtls13ServerOptions
+{
+    CookieExchange = Environment.GetEnvironmentVariable("CUPRIWEBRTC_NO_COOKIE") != "1",
+    RequestClientCertificate = Environment.GetEnvironmentVariable("CUPRIWEBRTC_NO_CERTREQ") != "1",
+};
+
 var credentials = IceCredentials.Generate();
-await using var listener = new WebRtcListener(new IPEndPoint(IPAddress.Loopback, port), credentials);
+await using var listener = new WebRtcListener(
+    new IPEndPoint(IPAddress.Loopback, port), credentials, dtls13Options: dtls13);
 
 listener.SessionFaulted += (remote, ex) =>
     Console.WriteLine($"SESSION_FAULTED from={remote}: {ex.GetType().Name}: {ex.Message}\n{ex}");
+
+listener.SessionSecured += (remote, version) =>
+    Console.WriteLine($"SESSION_SECURED from={remote} version={version}");
 
 listener.ChannelOpened += channel =>
 {

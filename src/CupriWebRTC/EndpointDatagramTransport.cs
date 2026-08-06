@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Net;
+using CupriWebRTC.Dtls;
 using CupriWebRTC.Ice;
 using Org.BouncyCastle.Tls;
 
@@ -17,6 +18,10 @@ internal sealed class EndpointDatagramTransport : DatagramTransport
     private volatile IPEndPoint _remote;
     private readonly BlockingCollection<byte[]> _inbound = new();
 
+    // Set CUPRIWEBRTC_PCAP=<path> to capture the DTLS flow for Wireshark; null (and free) otherwise. One file for the
+    // whole process — see DtlsPcapTap.Shared — so it is never closed or truncated by a session ending.
+    private readonly DtlsPcapTap? _pcap = DtlsPcapTap.Shared;
+
     public EndpointDatagramTransport(IceUdpEndpoint endpoint, IPEndPoint remote)
     {
         _endpoint = endpoint;
@@ -30,6 +35,7 @@ internal sealed class EndpointDatagramTransport : DatagramTransport
     /// <summary>Feed one inbound DTLS datagram (called from the ICE receive loop).</summary>
     public void Enqueue(ReadOnlyMemory<byte> datagram)
     {
+        _pcap?.Write(datagram.Span, _remote, _endpoint.LocalEndPoint);
         try { _inbound.Add(datagram.ToArray()); }
         catch (InvalidOperationException) { /* closed */ }
     }
@@ -53,6 +59,7 @@ internal sealed class EndpointDatagramTransport : DatagramTransport
     public void Send(ReadOnlySpan<byte> buffer)
     {
         var copy = buffer.ToArray();
+        _pcap?.Write(copy, _endpoint.LocalEndPoint, _remote);
         _endpoint.SendAsync(copy, _remote).AsTask().GetAwaiter().GetResult();
     }
 

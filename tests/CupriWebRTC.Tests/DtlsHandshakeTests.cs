@@ -18,7 +18,7 @@ public class DtlsHandshakeTests
         var (serverTransport, clientTransport) = InMemoryDatagramTransport.CreatePair();
 
         // Run the (blocking) server handshake on a background thread while the client connects on this one.
-        DtlsTransport? serverSecured = null;
+        ISecureDatagramTransport? serverSecured = null;
         Exception? serverError = null;
         var serverThread = new Thread(() =>
         {
@@ -38,10 +38,11 @@ public class DtlsHandshakeTests
         // Application data flows over the secured transport, both directions.
         var buffer = new byte[2048];
         clientSecured.Send("hello dtls"u8);
-        var n = serverSecured!.Receive(buffer, 5000);
+        var n = serverSecured!.Receive(buffer, 0, buffer.Length, 5000);
         Assert.Equal("hello dtls", Encoding.UTF8.GetString(buffer, 0, n));
 
-        serverSecured.Send("hello back"u8);
+        var reply = Encoding.UTF8.GetBytes("hello back");
+        serverSecured.Send(reply, 0, reply.Length);
         var m = clientSecured.Receive(buffer, 5000);
         Assert.Equal("hello back", Encoding.UTF8.GetString(buffer, 0, m));
 

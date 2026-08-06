@@ -1,5 +1,6 @@
 using System.Net;
 using CupriWebRTC.Dtls;
+using CupriWebRTC.Dtls13;
 using CupriWebRTC.Ice;
 using CupriWebRTC.Sctp;
 
@@ -42,7 +43,8 @@ public sealed class WebRtcListener : IAsyncDisposable
         IceCredentials? credentials = null,
         DtlsCertificate? certificate = null,
         int maxSessions = DefaultMaxSessions,
-        TimeSpan? sessionIdleTimeout = null)
+        TimeSpan? sessionIdleTimeout = null,
+        Dtls13ServerOptions? dtls13Options = null)
     {
         ArgumentNullException.ThrowIfNull(bind);
         ArgumentOutOfRangeException.ThrowIfLessThan(maxSessions, 1);
@@ -50,7 +52,7 @@ public sealed class WebRtcListener : IAsyncDisposable
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(idle, TimeSpan.Zero);
 
         _certificate = certificate ?? DtlsCertificate.GenerateSelfSigned();
-        _dtls = new DtlsServer(_certificate);
+        _dtls = new DtlsServer(_certificate, dtls13Options);
         _maxSessions = maxSessions;
         _idleTimeoutMs = (long)idle.TotalMilliseconds;
         _ice = new IceUdpEndpoint(credentials ?? IceCredentials.Generate(), bind);
@@ -81,6 +83,11 @@ public sealed class WebRtcListener : IAsyncDisposable
     /// <summary>Raised when a peer's session fails to establish (e.g. the DTLS handshake), with the peer address and
     /// the cause — for observability/diagnostics. The session is evicted regardless.</summary>
     public event Action<IPEndPoint, Exception>? SessionFaulted;
+
+    /// <summary>Raised when a peer's DTLS handshake completes, with the peer address and the negotiated version
+    /// (<c>"DTLS 1.3"</c> for browsers, <c>"DTLS 1.2"</c> for the BouncyCastle fallback) — the counterpart to
+    /// <see cref="SessionFaulted"/>, and the quickest way to see which path a peer actually took.</summary>
+    public event Action<IPEndPoint, string>? SessionSecured;
 
     /// <summary>Runs the endpoint (ICE receive loop) until cancelled.</summary>
     public Task RunAsync(CancellationToken cancellationToken) => _ice.RunAsync(cancellationToken);
@@ -143,6 +150,7 @@ public sealed class WebRtcListener : IAsyncDisposable
             try
             {
                 var secured = _dtls.Accept(session.Bridge); // blocks until the DTLS handshake completes (or times out)
+                SessionSecured?.Invoke(session.Remote, secured.ProtocolVersion);
                 sctp = new SctpTransport(secured, new SctpAssociation());
             }
             catch (Exception ex)
