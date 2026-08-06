@@ -62,6 +62,24 @@
       ].join('\r\n');
     }
 
+    // The DTLS transport appears on pc.sctp after the descriptions are set; poll for it, then log its state and any
+    // error. RTCError for a DTLS failure carries errorDetail ("dtls-failure"), a message, and sentAlert/receivedAlert.
+    function hookDtls(pc, tries) {
+      tries = tries || 0;
+      const t = pc.sctp && pc.sctp.transport;
+      if (!t) { if (tries < 2000) setTimeout(() => hookDtls(pc, tries + 1), 5); return; } // poll fast to beat the failure
+      if (t.__hooked) return;
+      t.__hooked = true;
+      log('dtls transport found; state=' + t.state);
+      t.addEventListener('statechange', () => log('dtlsState=' + t.state));
+      t.addEventListener('error', (e) => {
+        const err = e.error || e;
+        log('DTLS ERROR: errorDetail=' + err.errorDetail + ' sentAlert=' + err.sentAlert +
+            ' receivedAlert=' + err.receivedAlert + ' message=' + err.message);
+        setStatus('FAIL:dtls:' + err.errorDetail + ':sent=' + err.sentAlert + ':' + (err.message || ''));
+      });
+    }
+
     async function run() {
       if (!P.ufrag || !P.pwd || !P.fp || !P.port) {
         setStatus('FAIL:missing-params');
@@ -80,9 +98,13 @@
       dc.onmessage = (e) => { log('DATACHANNEL MESSAGE: ' + e.data); setStatus('SUCCESS'); };
       dc.onerror = (e) => log('datachannel error: ' + (e.error ? e.error.message : e));
 
+      // Hook the DTLS transport for Chrome's own failure reason (errorDetail / message / the DTLS alert it sent).
+      hookDtls(pc);
+
       try {
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
+        hookDtls(pc); // start hooking as early as possible, before the (fast) DTLS failure
         log('--- offer ---\n' + offer.sdp);
         const answer = buildAnswer(offer.sdp);
         log('--- synthesised answer ---\n' + answer);
